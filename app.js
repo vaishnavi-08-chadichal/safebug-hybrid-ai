@@ -1,6 +1,14 @@
 // Import Firebase SDK via CDN (works directly in the browser)
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  serverTimestamp,
+  query,
+  limit,
+  getDocs
+} from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
 const config = window.SAFEBUG_CONFIG || {};
 const firebaseConfig = config.firebase;
@@ -8,6 +16,49 @@ const firebaseConfig = config.firebase;
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+
+const historyList = document.getElementById("historyList");
+
+async function loadDebugHistory() {
+  if (!historyList) return;
+  try {
+    const q = query(collection(db, "debugHistory"), limit(5));
+    const snapshot = await getDocs(q);
+
+    if (snapshot.empty) {
+      historyList.textContent = "No debug runs saved yet.";
+      return;
+    }
+
+    const docs = snapshot.docs
+      .map((doc) => doc.data())
+      .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
+    historyList.innerHTML = docs
+      .map((item) => {
+        const secretsLabel =
+          item.redactionCount > 0
+            ? `🛡️ ${item.redactionCount} secret(s) redacted`
+            : "🛡️ 0 secrets";
+        const safePreview = String(item.codePreview || "")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+
+        return `
+          <div style="border:1px solid #333;border-radius:8px;padding:10px;margin-bottom:8px;background:rgba(0,0,0,0.2);">
+            <strong>${item.route || "Debug Run"}</strong> — <span>${secretsLabel}</span>
+            <pre style="white-space:pre-wrap;margin-top:6px;font-size:12px;">${safePreview}</pre>
+          </div>
+        `;
+      })
+      .join("");
+  } catch (err) {
+    historyList.textContent = "Could not load history right now.";
+    console.warn("History load failed:", err.message);
+  }
+}
+
+loadDebugHistory();
 
 async function saveDebugSession({ route, rawCode, sanitizedCode, redactionCount = 0, secretTypes = [] }) {
   try {
@@ -19,6 +70,7 @@ async function saveDebugSession({ route, rawCode, sanitizedCode, redactionCount 
       secretTypes,
       createdAt: serverTimestamp()
     });
+    await loadDebugHistory();
     console.log("Saved debug session to Firestore:", route);
   } catch (err) {
     console.warn("Firestore save skipped/failed:", err.message);
