@@ -1,11 +1,29 @@
 // Import Firebase SDK via CDN (works directly in the browser)
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
 const config = window.SAFEBUG_CONFIG || {};
 const firebaseConfig = config.firebase;
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+async function saveDebugSession({ route, rawCode, sanitizedCode, redactionCount = 0, secretTypes = [] }) {
+  try {
+    const safeCodeToStore = sanitizedCode ?? redactSecrets(rawCode).sanitized;
+    await addDoc(collection(db, "debugHistory"), {
+      route,
+      codePreview: safeCodeToStore.slice(0, 300),
+      redactionCount,
+      secretTypes,
+      createdAt: serverTimestamp()
+    });
+    console.log("Saved debug session to Firestore:", route);
+  } catch (err) {
+    console.warn("Firestore save skipped/failed:", err.message);
+  }
+}
 console.log("Firebase initialized:", app.name);
 
 // Connect UI Elements
@@ -46,6 +64,15 @@ debugBtn.addEventListener("click", async () => {
     const result = await session.prompt(`Debug this code:\n\n${code}`);
     renderOutput(result, "🔒 Local On-Device Debug (Gemini Nano)");
     session.destroy();
+
+    const { sanitized, count, types } = redactSecrets(code);
+    await saveDebugSession({
+      route: "Local Gemini Nano",
+      rawCode: code,
+      sanitizedCode: sanitized,
+      redactionCount: count,
+      secretTypes: types
+    });
   } catch (error) {
     outputBox.textContent = `❌ Error: ${error.message}`;
     console.error(error);
@@ -118,6 +145,14 @@ async function runCloudAudit(rawCode, routeLabel = "⚡ Smart Route: Cloud Deep 
 
   const redactedPreview = `${routeLabel}\n${secretSummary}\n🔒 Sanitized Code Sent to Cloud:\n${sanitized}`;
   renderOutput(cloudReply, redactedPreview);
+
+  await saveDebugSession({
+    route: routeLabel,
+    rawCode,
+    sanitizedCode: sanitized,
+    redactionCount: count,
+    secretTypes: types
+  });
 }
 
 if (cloudDebugBtn) {
@@ -175,6 +210,15 @@ if (smartDebugBtn) {
         const result = await session.prompt(`Debug this code:\n\n${code}`);
         renderOutput(result, "⚡ Smart Route: Local Gemini Nano (On-Device)");
         session.destroy();
+
+        const { sanitized, count, types } = redactSecrets(code);
+        await saveDebugSession({
+          route: "Smart Route: Local Gemini Nano",
+          rawCode: code,
+          sanitizedCode: sanitized,
+          redactionCount: count,
+          secretTypes: types
+        });
       } else {
         await runCloudAudit(code, "⚡ Smart Route: Cloud Deep Audit");
       }
