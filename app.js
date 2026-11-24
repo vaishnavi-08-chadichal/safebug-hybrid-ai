@@ -18,6 +18,49 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 const historyList = document.getElementById("historyList");
+const privacyBadge = document.getElementById("privacyBadge");
+const loadSampleBtn = document.getElementById("loadSampleBtn");
+const copyOutputBtn = document.getElementById("copyOutputBtn");
+
+let lastRawMarkdownOutput = "";
+
+const SAMPLE_VULNERABLE_CODE = `// Sample Auth & Payment Handler (Contains Intentional Bugs + Exposed Secrets)
+const GEMINI_KEY = "AIzaSyDemoFakeGoogleApiKey123456789012345";
+const STRIPE_SECRET = "sk-live-9876543210abcdef123456";
+const DB_URI = "mongodb+srv://admin:SuperSecretPass99@cluster0.mongodb.net/prod";
+const adminPassword = "admin123_hardcoded_password";
+
+async function loginUser(req, dbClient) {
+  const { username, password } = req.body;
+  // Bug 1: SQL Injection vulnerability via string interpolation
+  const query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "'";
+  const user = await dbClient.query(query);
+
+  // Bug 2: Assignment (=) instead of comparison (===) grants admin to everyone!
+  if (user.role = "admin") {
+    return { access: true, token: STRIPE_SECRET };
+  }
+  return { access: false };
+}`;
+
+function updatePrivacyBadge(text, mode = "ready") {
+  if (!privacyBadge) return;
+  privacyBadge.textContent = text;
+
+  if (mode === "local") {
+    privacyBadge.style.background = "rgba(16, 185, 129, 0.18)";
+    privacyBadge.style.borderColor = "#10b981";
+    privacyBadge.style.color = "#a7f3d0";
+  } else if (mode === "cloud") {
+    privacyBadge.style.background = "rgba(59, 130, 246, 0.18)";
+    privacyBadge.style.borderColor = "#3b82f6";
+    privacyBadge.style.color = "#bfdbfe";
+  } else {
+    privacyBadge.style.background = "rgba(16, 185, 129, 0.15)";
+    privacyBadge.style.borderColor = "#10b981";
+    privacyBadge.style.color = "#a7f3d0";
+  }
+}
 
 async function loadDebugHistory() {
   if (!historyList) return;
@@ -86,6 +129,31 @@ const cloudDebugBtn = document.getElementById("cloudDebugBtn");
 const smartDebugBtn = document.getElementById("smartDebugBtn");
 const GEMINI_API_KEY = config.geminiApiKey;
 
+if (loadSampleBtn) {
+  loadSampleBtn.addEventListener("click", () => {
+    codeInput.value = SAMPLE_VULNERABLE_CODE;
+    updatePrivacyBadge("🧪 Sample loaded (4 fake secrets + 2 bugs ready to test)", "ready");
+  });
+}
+
+if (copyOutputBtn) {
+  copyOutputBtn.addEventListener("click", async () => {
+    const textToCopy = lastRawMarkdownOutput || outputBox.innerText;
+    if (!textToCopy || textToCopy === "AI response will appear here...") return;
+
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      const originalText = copyOutputBtn.textContent;
+      copyOutputBtn.textContent = "✅ Copied!";
+      setTimeout(() => {
+        copyOutputBtn.textContent = originalText;
+      }, 1800);
+    } catch (err) {
+      console.warn("Clipboard copy failed:", err.message);
+    }
+  });
+}
+
 // Local Gemini Nano Debugging Function
 debugBtn.addEventListener("click", async () => {
   const code = codeInput.value.trim();
@@ -96,6 +164,7 @@ debugBtn.addEventListener("click", async () => {
   }
 
   outputBox.textContent = "🔍 Analyzing code locally with Gemini Nano (100% private)...";
+  updatePrivacyBadge("🔒 Running 100% On-Device (Gemini Nano)...", "local");
   debugBtn.disabled = true;
 
   try {
@@ -115,6 +184,7 @@ debugBtn.addEventListener("click", async () => {
 
     const result = await session.prompt(`Debug this code:\n\n${code}`);
     renderOutput(result, "🔒 Local On-Device Debug (Gemini Nano)");
+    updatePrivacyBadge("🔒 100% On-Device (Gemini Nano) — Zero Network Payload", "local");
     session.destroy();
 
     const { sanitized, count, types } = redactSecrets(code);
@@ -161,32 +231,61 @@ async function hasLocalNano() {
   return Boolean("LanguageModel" in self || (self.ai && self.ai.languageModel));
 }
 
+async function fetchGeminiWithTimeout(modelName, promptText, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: promptText }] }]
+        }),
+        signal: controller.signal
+      }
+    );
+
+    const json = await response.json();
+    if (!response.ok) {
+      throw new Error(json.error?.message || `HTTP ${response.status}`);
+    }
+    return json;
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error(`${modelName} timed out after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function runCloudAudit(rawCode, routeLabel = "⚡ Smart Route: Cloud Deep Audit") {
   const { sanitized, count, types } = redactSecrets(rawCode);
-  outputBox.textContent = `🛡️ Redacted ${count} secret(s) locally & sending sanitized code to Cloud AI...`;
+  const promptText = `You are SafeBug Cloud Auditor. Perform a deep bug, edge-case, and security review of this sanitized code:\n\n${sanitized}`;
+  const candidateModels = ["gemini-2.5-flash", "gemini-3.5-flash-lite"];
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: `You are SafeBug Cloud Auditor. Perform a deep bug, edge-case, and security review of this sanitized code:\n\n${sanitized}`
-              }
-            ]
-          }
-        ]
-      })
+  let data = null;
+  let lastErrorMessage = "Cloud Gemini request failed";
+
+  for (const modelName of candidateModels) {
+    outputBox.textContent = `🛡️ Redacted ${count} secret(s) locally • Asking ${modelName}...`;
+    try {
+      data = await fetchGeminiWithTimeout(modelName, promptText, 8000);
+      break;
+    } catch (err) {
+      lastErrorMessage = err.message;
+      console.warn(`Model ${modelName} skipped:`, err.message);
     }
-  );
+  }
 
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error?.message || "Cloud Gemini request failed");
+  if (!data) {
+    throw new Error(
+      `${lastErrorMessage} (Tip: Local Gemini Nano / Smart Hybrid still works on-device, or retry Cloud AI in a moment.)`
+    );
   }
 
   const cloudReply =
@@ -197,6 +296,10 @@ async function runCloudAudit(rawCode, routeLabel = "⚡ Smart Route: Cloud Deep 
 
   const redactedPreview = `${routeLabel}\n${secretSummary}\n🔒 Sanitized Code Sent to Cloud:\n${sanitized}`;
   renderOutput(cloudReply, redactedPreview);
+  updatePrivacyBadge(
+    `🛡️ Cloud Route — ${count} Secret(s) Redacted Locally Before Transit`,
+    "cloud"
+  );
 
   await saveDebugSession({
     route: routeLabel,
@@ -216,6 +319,8 @@ if (cloudDebugBtn) {
       return;
     }
 
+    outputBox.textContent = "🛡️ Redacting secrets locally & connecting to Cloud AI...";
+    updatePrivacyBadge("🛡️ Sanitization & Cloud Route in progress...", "cloud");
     cloudDebugBtn.disabled = true;
     debugBtn.disabled = true;
     if (smartDebugBtn) smartDebugBtn.disabled = true;
@@ -242,6 +347,8 @@ if (smartDebugBtn) {
       return;
     }
 
+    outputBox.textContent = "⚡ Evaluating Smart Route (Local Gemini Nano vs. Cloud)...";
+    updatePrivacyBadge("⚡ Smart Hybrid Routing in progress...", "ready");
     smartDebugBtn.disabled = true;
     debugBtn.disabled = true;
     if (cloudDebugBtn) cloudDebugBtn.disabled = true;
@@ -251,26 +358,32 @@ if (smartDebugBtn) {
       const isShortSnippet = code.length <= 600;
 
       if (nanoAvailable && isShortSnippet) {
-        outputBox.textContent = "⚡ Smart Route: Local Gemini Nano (short snippet, 100% on-device)...";
-        const systemPrompt =
-          "You are SafeBug, a fast, privacy-first code debugger. Find bugs, security leaks, or syntax issues in the user's code and provide a clean, concise fix.";
+        try {
+          outputBox.textContent = "⚡ Smart Route: Local Gemini Nano (short snippet, 100% on-device)...";
+          const systemPrompt =
+            "You are SafeBug, a fast, privacy-first code debugger. Find bugs, security leaks, or syntax issues in the user's code and provide a clean, concise fix.";
 
-        const session = "LanguageModel" in self
-          ? await LanguageModel.create({ systemPrompt, outputLanguage: "en" })
-          : await self.ai.languageModel.create({ systemPrompt, outputLanguage: "en" });
+          const session = "LanguageModel" in self
+            ? await LanguageModel.create({ systemPrompt, outputLanguage: "en" })
+            : await self.ai.languageModel.create({ systemPrompt, outputLanguage: "en" });
 
-        const result = await session.prompt(`Debug this code:\n\n${code}`);
-        renderOutput(result, "⚡ Smart Route: Local Gemini Nano (On-Device)");
-        session.destroy();
+          const result = await session.prompt(`Debug this code:\n\n${code}`);
+          renderOutput(result, "⚡ Smart Route: Local Gemini Nano (On-Device)");
+          updatePrivacyBadge("🔒 100% On-Device (Smart Route) — Zero Network Payload", "local");
+          session.destroy();
 
-        const { sanitized, count, types } = redactSecrets(code);
-        await saveDebugSession({
-          route: "Smart Route: Local Gemini Nano",
-          rawCode: code,
-          sanitizedCode: sanitized,
-          redactionCount: count,
-          secretTypes: types
-        });
+          const { sanitized, count, types } = redactSecrets(code);
+          await saveDebugSession({
+            route: "Smart Route: Local Gemini Nano",
+            rawCode: code,
+            sanitizedCode: sanitized,
+            redactionCount: count,
+            secretTypes: types
+          });
+        } catch (localErr) {
+          console.warn("Local Nano unavailable, falling back to Cloud AI:", localErr.message);
+          await runCloudAudit(code, "⚡ Smart Route: Cloud Fallback (Secrets Redacted)");
+        }
       } else {
         await runCloudAudit(code, "⚡ Smart Route: Cloud Deep Audit");
       }
@@ -286,6 +399,7 @@ if (smartDebugBtn) {
 }
 
 function renderOutput(markdownText, prefixHeader = "") {
+  lastRawMarkdownOutput = markdownText;
   const safeMarkdown = typeof marked !== "undefined" ? marked.parse(markdownText) : markdownText;
   const safeHeader = prefixHeader
     ? `<pre style="white-space:pre-wrap;background:rgba(0,0,0,0.25);padding:10px;border-radius:8px;margin-bottom:12px;">${prefixHeader.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`

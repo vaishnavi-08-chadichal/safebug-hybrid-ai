@@ -7,26 +7,40 @@
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #fff; padding: 40px; }
         .container { max-width: 700px; margin: auto; background: #2d2d2d; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        textarea { width: 100%; height: 150px; background: #1e1e1e; color: #0ff; border: 1px solid #444; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 14px; margin-top: 10px; }
-        button { background: #007acc; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 6px; cursor: pointer; margin-top: 15px; }
+        textarea { width: 100%; height: 150px; background: #1e1e1e; color: #0ff; border: 1px solid #444; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 14px; margin-top: 8px; box-sizing: border-box; }
+        button { background: #007acc; color: white; border: none; padding: 12px 20px; font-size: 15px; border-radius: 6px; cursor: pointer; margin-top: 15px; }
         button:hover { background: #005999; }
-        .output { background: #1e1e1e; border: 1px solid #444; padding: 15px; border-radius: 6px; margin-top: 20px; white-space: pre-wrap; font-family: monospace; color: #ce9178; }
+        .btn-sm { padding: 6px 12px; font-size: 13px; margin-top: 0; background: #3b3b3b; border: 1px solid #555; }
+        .btn-sm:hover { background: #4a4a4a; }
+        .top-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+        .status-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+        #privacyBadge { font-size: 13px; padding: 6px 12px; border-radius: 999px; background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #a7f3d0; }
+        .output { background: #1e1e1e; border: 1px solid #444; padding: 15px; border-radius: 6px; margin-top: 10px; white-space: pre-wrap; font-family: monospace; color: #ce9178; }
     </style>
 </head>
 <body>
     <div class="container">
         <h2>🛡️ SafeBug: Hybrid AI Debugger</h2>
-        <p>Paste your buggy code below for local privacy-first debugging via Gemini Nano:</p>
+        <div class="top-bar">
+            <p style="margin: 0;">Paste your buggy code below for local privacy-first debugging via Gemini Nano:</p>
+            <button id="loadSampleBtn" type="button" class="btn-sm">🧪 Load Vulnerable Sample</button>
+        </div>
         <textarea id="codeInput" placeholder="// Paste code snippet here..."></textarea>
         <br>
         <button id="debugBtn">Debug with Local AI</button>
         <button id="cloudDebugBtn" type="button">Deep Audit with Cloud AI</button>
         <button id="smartDebugBtn" style="background-color: #10b981;">⚡ Smart Hybrid Debug</button>
+
+        <div class="status-bar">
+            <div id="privacyBadge">🛡️ Privacy Shield Ready — Secrets stripped locally before any cloud call</div>
+            <button id="copyOutputBtn" type="button" class="btn-sm">📋 Copy Fix</button>
+        </div>
+
         <div class="output" id="outputBox">AI response will appear here...</div>
         <section id="historySection" style="margin-top: 20px;">
-        <h3>🕒 Recent Sanitized Runs (Firestore)</h3>
-        <div id="historyList">Loading history...</div>
-</section>
+            <h3>🕒 Recent Sanitized Runs (Firestore)</h3>
+            <div id="historyList">Loading history...</div>
+        </section>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="config.local.js"></script>
