@@ -27,7 +27,7 @@ let lastRawMarkdownOutput = "";
 const SAMPLE_VULNERABLE_CODE = `// Sample Auth & Payment Handler (Contains Intentional Bugs + Exposed Secrets)
 const GEMINI_KEY = "AIzaSyDemoFakeGoogleApiKey123456789012345";
 const STRIPE_SECRET = "sk-live-9876543210abcdef123456";
-const DB_URI = "mongodb+srv://admin:SuperSecretPass99@cluster0.mongodb.net/prod";
+const DB_URI = "mongodb+srv://admin:SuperSecretPass99@cluster0.example.invalid/prod";
 const adminPassword = "admin123_hardcoded_password";
 
 async function loginUser(req, dbClient) {
@@ -231,7 +231,7 @@ async function hasLocalNano() {
   return Boolean("LanguageModel" in self || (self.ai && self.ai.languageModel));
 }
 
-async function fetchGeminiWithTimeout(modelName, promptText, timeoutMs = 8000) {
+async function fetchGeminiWithTimeout(modelName, promptText, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -274,7 +274,7 @@ async function runCloudAudit(rawCode, routeLabel = "⚡ Smart Route: Cloud Deep 
   for (const modelName of candidateModels) {
     outputBox.textContent = `🛡️ Redacted ${count} secret(s) locally • Asking ${modelName}...`;
     try {
-      data = await fetchGeminiWithTimeout(modelName, promptText, 8000);
+      data = await fetchGeminiWithTimeout(modelName, promptText, 15000);
       break;
     } catch (err) {
       lastErrorMessage = err.message;
@@ -385,7 +385,36 @@ if (smartDebugBtn) {
           await runCloudAudit(code, "⚡ Smart Route: Cloud Fallback (Secrets Redacted)");
         }
       } else {
-        await runCloudAudit(code, "⚡ Smart Route: Cloud Deep Audit");
+        try {
+          await runCloudAudit(code, "⚡ Smart Route: Cloud Deep Audit");
+        } catch (cloudErr) {
+          if (nanoAvailable) {
+            console.warn("Cloud AI busy, falling back to Local Nano:", cloudErr.message);
+            outputBox.textContent = "⚡ Cloud busy — falling back to Local Gemini Nano (100% on-device)...";
+            const systemPrompt =
+              "You are SafeBug, a fast, privacy-first code debugger. Find bugs, security leaks, or syntax issues in the user's code and provide a clean, concise fix.";
+
+            const session = "LanguageModel" in self
+              ? await LanguageModel.create({ systemPrompt, outputLanguage: "en" })
+              : await self.ai.languageModel.create({ systemPrompt, outputLanguage: "en" });
+
+            const result = await session.prompt(`Debug this code:\n\n${code}`);
+            renderOutput(result, "⚡ Smart Route: Local Nano Fallback (Cloud Busy)");
+            updatePrivacyBadge("🔒 100% On-Device (Smart Fallback) — Zero Network Payload", "local");
+            session.destroy();
+
+            const { sanitized, count, types } = redactSecrets(code);
+            await saveDebugSession({
+              route: "Smart Route: Local Nano Fallback",
+              rawCode: code,
+              sanitizedCode: sanitized,
+              redactionCount: count,
+              secretTypes: types
+            });
+          } else {
+            throw cloudErr;
+          }
+        }
       }
     } catch (error) {
       outputBox.textContent = `❌ Smart Hybrid Error: ${error.message}`;
